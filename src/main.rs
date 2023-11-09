@@ -32,28 +32,31 @@ impl Mesh {
     }
 }
 
-fn cam_shells(shell_resolutions: Vec<[usize; 2]>) -> Vec<Mesh> {
+fn cam_shells(shell_resolutions: Vec<[usize; 2]>, z_multiplier: f32) -> Vec<Mesh> {
     let mut vec = Vec::with_capacity(shell_resolutions.len());
-    for (shell_index, shell_resolution) in shell_resolutions
-        .into_iter()
-        .enumerate()
-        .map(|(shell_index, shell_resolution)| (shell_index as f32, shell_resolution))
+    for (z, shell_resolution) in
+        shell_resolutions
+            .into_iter()
+            .enumerate()
+            .map(|(shell_index, shell_resolution)| {
+                let mut z = shell_index as f32;
+                z *= z_multiplier;
+                (z * z * z * z, shell_resolution)
+            })
     {
         vec.push(Mesh {
             vertices: {
                 // fill vec with vertices
-                let mut vertices = vec![
-                    Vertex {
-                        position: [0.0, 0.0, shell_index]
-                    };
-                    shell_resolution[0] * shell_resolution[1]
-                ];
-                vertices
-                    .iter_mut()
-                    .enumerate()
-                    .for_each(|(vertex_index, vertex)| {});
-
-                vertices
+                (0..(shell_resolution[0] * shell_resolution[1]))
+                    .into_iter()
+                    .map(|vertex_index| Vertex {
+                        position: [
+                            (vertex_index % shell_resolution[0]) as f32,
+                            (vertex_index / shell_resolution[0]) as f32,
+                            z,
+                        ],
+                    })
+                    .collect::<Vec<_>>()
             },
             indices: {
                 // fill vec with indices
@@ -102,6 +105,7 @@ fn main() {
             .map(|res| res * res)
             .map(|res| [res, res])
             .collect::<Vec<_>>(),
+        0.1875,
     )
     .into_iter()
     .map(|mesh| {
