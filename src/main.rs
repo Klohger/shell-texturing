@@ -5,10 +5,11 @@ use glium::{
     draw_parameters::{
         ClipControlDepth, ClipControlOrigin, DepthClamp, PolygonOffset, ProvokingVertex, Stencil,
     },
+    glutin::surface::WindowSurface,
     index::PrimitiveType,
-    uniform, BackfaceCullingMode, Blend, BlendingFunction, Depth, DepthTest, DrawParameters,
-    LinearBlendingFactor, PolygonMode, Program as ShaderProgram, StencilOperation, StencilTest,
-    Surface,
+    uniform, BackfaceCullingMode, Blend, BlendingFunction, Depth, DepthTest, Display,
+    DrawParameters, LinearBlendingFactor, PolygonMode, Program as ShaderProgram, StencilOperation,
+    StencilTest, Surface,
 };
 use std::{
     cell::RefCell,
@@ -19,7 +20,7 @@ use vertex::Vertex;
 use winit::{
     event::{Event, WindowEvent},
     event_loop::EventLoopBuilder,
-    window::WindowBuilder,
+    window::{Window, WindowBuilder},
 };
 
 mod mesh;
@@ -88,6 +89,29 @@ const PARAMS: DrawParameters = DrawParameters {
     clip_control_origin: ClipControlOrigin::LowerLeft,
     clip_control_depth: ClipControlDepth::NegativeOneToOne,
 };
+
+struct ProgramState {
+    window: Rc<RefCell<Window>>,
+    display: Rc<RefCell<Display<WindowSurface>>>,
+    world_projection: Rc<RefCell<(Mat4, Mat4)>>,
+    camera_projection: Rc<RefCell<(Mat4, Mat4)>>,
+}
+
+impl ProgramState {
+    fn new(
+        window: Window,
+        display: Display<WindowSurface>,
+        world_projection: Mat4,
+        camera_projection: Mat4,
+    ) -> Self {
+        Self {
+            window: Rc::new(RefCell::new(window)),
+            display: ,
+            world_projection,
+            camera_projection,
+        }
+    }
+}
 
 fn main() {
     const CAM_FOV: f32 = f32::consts::PI / 2.0;
@@ -201,7 +225,7 @@ fn main() {
             Event::RedrawRequested(_) => {
                 println!("redraw requested");
                 last_draw_time = Some(draw(false))
-            },
+            }
             _ => (),
         }
         match control_flow {
