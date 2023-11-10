@@ -1,29 +1,24 @@
-use core::f32;
-use glam::Mat4;
 use glium::{
     backend::glutin::SimpleWindowBuilder,
     draw_parameters::{
         ClipControlDepth, ClipControlOrigin, DepthClamp, PolygonOffset, ProvokingVertex, Stencil,
     },
-    glutin::surface::WindowSurface,
     index::PrimitiveType,
-    uniform, BackfaceCullingMode, Blend, BlendingFunction, Depth, DepthTest, Display,
-    DrawParameters, LinearBlendingFactor, PolygonMode, Program as ShaderProgram, StencilOperation,
-    StencilTest, Surface,
+    uniform, BackfaceCullingMode, Blend, BlendingFunction, Depth, DepthTest, DrawParameters,
+    LinearBlendingFactor, PolygonMode, Program as ShaderProgram, StencilOperation, StencilTest,
+    Surface,
 };
-use std::{
-    cell::RefCell,
-    rc::Rc,
-    time::{self, Duration},
-};
+use std::time::{self, Duration};
 use vertex::Vertex;
 use winit::{
     event::{Event, WindowEvent},
     event_loop::EventLoopBuilder,
-    window::{Window, WindowBuilder},
+    window::WindowBuilder,
 };
 
 mod mesh;
+mod program_state;
+mod transform;
 mod vertex;
 
 const PARAMS: DrawParameters = DrawParameters {
@@ -90,41 +85,7 @@ const PARAMS: DrawParameters = DrawParameters {
     clip_control_depth: ClipControlDepth::NegativeOneToOne,
 };
 
-struct ProgramState {
-    window: Rc<RefCell<Window>>,
-    display: Rc<RefCell<Display<WindowSurface>>>,
-    world_projection: Rc<RefCell<(Mat4, Mat4)>>,
-    camera_projection: Rc<RefCell<(Mat4, Mat4)>>,
-}
-
-impl ProgramState {
-    fn new(
-        window: Window,
-        display: Display<WindowSurface>,
-        world_projection: Mat4,
-        camera_projection: Mat4,
-    ) -> Self {
-        Self {
-            window: Rc::new(RefCell::new(window)),
-            display: ,
-            world_projection,
-            camera_projection,
-        }
-    }
-}
-
 fn main() {
-    const CAM_FOV: f32 = f32::consts::PI / 2.0;
-    const CAM_NEAR: f32 = 0.01;
-    const CAM_FAR: f32 = 1.01;
-
-    fn set_projection(projection: &mut Mat4, inverse_projection: &mut Mat4, aspect_ratio: f32) {
-        println!("updated projection");
-
-        *projection = glam::Mat4::perspective_lh(CAM_FOV, aspect_ratio, CAM_NEAR, CAM_FAR);
-        *inverse_projection = projection.inverse();
-    }
-
     println!("initializng event loop");
     let event_loop = EventLoopBuilder::new().build();
     println!("building window");
@@ -136,18 +97,7 @@ fn main() {
         )
         .build(&event_loop);
 
-    let window = Rc::new(RefCell::new(window));
-
-    let mut projection = glam::Mat4::perspective_lh(
-        CAM_FOV,
-        {
-            let size = window.borrow().inner_size();
-            size.height as f32 / size.width as f32
-        },
-        CAM_NEAR,
-        CAM_FAR,
-    );
-    let mut inv_projection = projection.inverse();
+    let program_state = program_state::ProgramState::new(window, display);
 
     println!("generating camera shell meshes");
     let shell_resolutions = [[63, 63]; 512];
@@ -156,49 +106,60 @@ fn main() {
         .into_iter()
         .map(|mesh| {
             (
-                mesh.vertex_buffer(&display).unwrap(),
-                mesh.index_buffer(&display).unwrap(),
+                mesh.vertex_buffer(&*program_state.display.borrow())
+                    .unwrap(),
+                mesh.index_buffer(&*program_state.display.borrow()).unwrap(),
             )
         })
         .collect::<Vec<_>>();
 
     println!("initializng shader programs");
-    let cam_shell_program =
-        ShaderProgram::from_source(&display, VERTEX_SHADER_SRC, FRAGMENT_SHADER_SRC, None).unwrap();
+    let cam_shell_program = ShaderProgram::from_source(
+        &*program_state.display.borrow(),
+        VERTEX_SHADER_SRC,
+        FRAGMENT_SHADER_SRC,
+        None,
+    )
+    .unwrap();
 
     let mut last_draw_time = None;
-
-    let draw_window = window.clone();
-
-    let draw = move |first_draw: bool| {
-        let mut frame = display.draw();
-        frame.clear_color_and_depth((0.0, 0.0, 0.1, 1.0), 1.0);
-
-        for (vertex_buffer, index_buffer) in &cam_shells {
-            frame
-                .draw(
-                    vertex_buffer,
-                    index_buffer,
-                    &cam_shell_program,
-                    &uniform! { projection: projection.to_cols_array_2d() },
-                    &PARAMS,
-                )
-                .unwrap();
-        }
-
-        frame.finish().unwrap();
-
-        if first_draw {
-            draw_window.borrow_mut().set_visible(true);
-        }
-        return time::Instant::now();
-    };
 
     println!("running event loop");
 
     const DRAWS_PER_SEC: Duration = Duration::from_nanos(16_666_666);
 
     event_loop.run(move |ev, _, control_flow| {
+
+        let draw = {
+            let program_state = program_state.clone();
+            let cam_shells = &cam_shells;
+            let cam_shell_program = &cam_shell_program;
+            let draw = move |first_draw: bool| {
+                let mut frame = program_state.display.borrow().draw();
+                frame.clear_color_and_depth((0.0, 0.0, 0.1, 1.0), 1.0);
+
+                for (vertex_buffer, index_buffer) in cam_shells {
+                    frame
+                        .draw(
+                            vertex_buffer,
+                            index_buffer,
+                            cam_shell_program,
+                            &uniform! { projection: program_state.world_projection.borrow().0.to_cols_array_2d(), view: program_state.camera.borrow().mat().to_cols_array_2d() },
+                            &PARAMS,
+                        )
+                        .unwrap();
+                }
+
+                frame.finish().unwrap();
+
+                if first_draw {
+                    program_state.window.borrow_mut().set_visible(true);
+                }
+                return time::Instant::now();
+            };
+            draw
+        };
+
         let now = time::Instant::now();
         if let Some(_last_draw_time) = last_draw_time {
             if (now - _last_draw_time) >= DRAWS_PER_SEC {
@@ -213,12 +174,7 @@ fn main() {
                     control_flow.set_exit();
                 }
                 WindowEvent::Resized(size) => {
-                    set_projection(
-                        &mut projection,
-                        &mut inv_projection,
-                        size.width as f32 / size.height as f32,
-                    );
-                    //last_draw_time = Some(draw(true));
+                    program_state.update_aspect_ratio(size);
                 }
                 _ => (),
             },
@@ -248,7 +204,7 @@ fn cam_shells(shell_resolutions: &[[usize; 2]], z_pow: i32) -> Vec<mesh::Mesh> {
                 } else {
                     (shell_index as f32 / num_resolutions).powi(z_pow)
                 };
-                (z, shell_resolution)
+                (z + program_state::ProgramState::CAM_NEAR, shell_resolution)
             })
     } {
         let verts = (0..(shell_resolution[0] + 1) * (shell_resolution[1] + 1))
