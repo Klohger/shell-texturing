@@ -6,6 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+glam = { version = "0.24.2", features = ["approx", "fast-math"] }
 glium = "0.33.0"
 rodio = { version = "0.17.3", default-features = false, features = ["vorbis"] }
 winit = "0.28.7"
