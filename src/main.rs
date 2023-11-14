@@ -107,13 +107,15 @@ uniform vec3 centre;
 uniform vec3 color;
 uniform float scale;
 
+float linearstep(float edge0, float edge1, float x)
+{
+    return  clamp((x - edge0) / (edge1 - edge0), 0.0, 1.0);
+}
+
 void main() {
     float circle = scale - distance(v_position.xy, centre.xy);
-    if (circle <= 0.0 || circle > 1.0) {
-        discard;
-    }
     gl_FragDepth = circle + centre.z;
-    fragment_color = vec4(step(g), 1.0);
+    fragment_color = vec4(color, clamp(linearstep(0.0,0.01,circle), 0.0,1.0));
 }
 ";
 fn main() {
