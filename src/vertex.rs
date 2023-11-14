@@ -9,16 +9,8 @@ pub struct Vertex {
 
 impl Vertex {
     #[inline(always)]
-    pub const fn new(x: f32, y: f32, z: f32) -> Self {
-        Self {
-            position: [x, y, z],
-        }
-    }
-}
-
-impl Debug for Vertex {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.position.fmt(f)
+    pub const fn new(position: [f32; 3]) -> Self {
+        Self { position }
     }
 }
 

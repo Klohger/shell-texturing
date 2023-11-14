@@ -8,5 +8,9 @@ edition = "2021"
 [dependencies]
 glam = { version = "0.24.2", features = ["approx", "fast-math"] }
 glium = "0.33.0"
+nanorand = { version = "0.7.0", features = [
+    "getrandom",
+    "tls",
+], default-features = false }
 rodio = { version = "0.17.3", default-features = false, features = ["vorbis"] }
 winit = "0.28.7"
