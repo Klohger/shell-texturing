@@ -7,6 +7,7 @@ use winit::{dpi::PhysicalSize, window::Window};
 
 #[derive(Clone)]
 pub(crate) struct ProgramState {
+    pub uniforms: Rc<RefCell<Vec<([f32; 3], [f32; 3], f32, f32)>>>,
     pub(crate) window: Rc<RefCell<Window>>,
     pub(crate) display: Rc<RefCell<Display<WindowSurface>>>,
     pub(crate) world_projection: Rc<RefCell<(Mat4, Mat4)>>,
@@ -17,7 +18,11 @@ impl ProgramState {
     pub(crate) const CAM_FOV: f32 = f32::consts::PI / 2.0;
     pub(crate) const CAM_NEAR: f32 = 0.01;
     pub(crate) const CAM_FAR: f32 = 1.01;
-    pub(crate) fn new(window: Window, display: Display<WindowSurface>) -> Self {
+    pub(crate) fn new(
+        window: Window,
+        display: Display<WindowSurface>,
+        uniforms: Vec<([f32; 3], [f32; 3], f32, f32)>,
+    ) -> Self {
         let aspect_ratio = {
             let size = window.inner_size();
             size.width as f32 / size.height as f32
@@ -30,6 +35,7 @@ impl ProgramState {
         );
         let inv_world_projection = world_projection.inverse();
         Self {
+            uniforms: Rc::new(RefCell::new(uniforms)),
             window: Rc::new(RefCell::new(window)),
             display: Rc::new(RefCell::new(display)),
             world_projection: Rc::new(RefCell::new((world_projection, inv_world_projection))),

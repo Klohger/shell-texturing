@@ -14,3 +14,5 @@ nanorand = { version = "0.7.0", features = [
 ], default-features = false }
 rodio = { version = "0.17.3", default-features = false, features = ["vorbis"] }
 winit = "0.28.7"
+raw-window-handle = "0.5.2"
+glutin-winit = "0.3.0"

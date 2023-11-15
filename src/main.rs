@@ -1,15 +1,24 @@
 use glium::{
-    backend::glutin::SimpleWindowBuilder,
     draw_parameters::{
         ClipControlDepth, ClipControlOrigin, DepthClamp, PolygonOffset, ProvokingVertex, Stencil,
     },
+    glutin::{
+        config::ConfigTemplateBuilder,
+        context::{ContextAttributesBuilder, NotCurrentGlContextSurfaceAccessor},
+        display::{GetGlDisplay, GlDisplay},
+        surface::{SurfaceAttributesBuilder, WindowSurface},
+    },
     index::{IndicesSource, PrimitiveType},
-    uniform, BackfaceCullingMode, Blend, BlendingFunction, Depth, DepthTest, DrawParameters,
-    LinearBlendingFactor, PolygonMode, Program as ShaderProgram, StencilOperation, StencilTest,
-    Surface, VertexBuffer,
+    uniform, BackfaceCullingMode, Blend, BlendingFunction, Depth, DepthTest, Display,
+    DrawParameters, LinearBlendingFactor, PolygonMode, Program as ShaderProgram, StencilOperation,
+    StencilTest, Surface, VertexBuffer,
 };
+use raw_window_handle::HasRawWindowHandle;
 
-use std::time::{self, Duration};
+use std::{
+    num::NonZeroU32,
+    time::{self, Duration},
+};
 use vertex::Vertex;
 use winit::{
     event::{Event, WindowEvent},
@@ -89,48 +98,110 @@ const PARAMS: DrawParameters = DrawParameters {
 const VERTEX_SHADER_SRC: &str = r#"
 #version 140
 
+precision lowp float;
+
 in vec3 position;
-out vec3 v_position;
+out vec2 v_position;
+uniform float scale;
+uniform vec3 centre;
+
 void main() {
-    gl_Position = vec4(position, 1.0);
-    v_position = position;
+    gl_Position = vec4(position*scale + centre, 1.0);
+    v_position = position.xy;
 }
 "#;
 
 const FRAGMENT_SHADER_SRC: &str = "
 #version 140
 
-out vec4 fragment_color;
-in vec3 v_position;
+precision lowp float;
 
+out vec4 fragment_color;
+in vec2 v_position;
 uniform vec3 centre;
 uniform vec3 color;
 uniform float scale;
 
-float linearstep(float edge0, float edge1, float x)
-{
-    return  clamp((x - edge0) / (edge1 - edge0), 0.0, 1.0);
-}
-
 void main() {
-    float circle = scale - distance(v_position.xy, centre.xy);
-    gl_FragDepth = circle + centre.z;
-    fragment_color = vec4(color, clamp(linearstep(0.0,0.01,circle), 0.0,1.0));
+    float circle = 1.0 - length(v_position);
+    float depth;
+    float alpha = 1;
+    vec2 depth_and_alpha = (circle <= 0.0) ? vec2(0.0, 0.0) : vec2(circle*scale + centre.z, 1.0);
+    gl_FragDepth = depth_and_alpha.x;
+    fragment_color = vec4(color, depth_and_alpha.y);
 }
 ";
 fn main() {
     println!("initializng event loop");
     let event_loop = EventLoopBuilder::new().build();
     println!("building window");
-    let (window, display) = SimpleWindowBuilder::new()
-        .set_window_builder(
+    let (window, display) = {
+        // First we start by opening a new Window
+        let display_builder = glutin_winit::DisplayBuilder::new().with_window_builder(Some(
             WindowBuilder::new()
                 .with_title("shell texture swag wow™")
                 .with_visible(false),
-        )
-        .build(&event_loop);
+        ));
+        let config_template_builder = ConfigTemplateBuilder::new();
 
-    let program_state = program_state::ProgramState::new(window, display);
+        let (window, gl_config) = display_builder
+            .build(&event_loop, config_template_builder, |mut configs| {
+                // Just use the first configuration since we don't have any special preferences here
+                configs.next().unwrap()
+            })
+            .unwrap();
+        let window = window.unwrap();
+
+        // Now we get the window size to use as the initial size of the Surface
+        let (width, height): (u32, u32) = window.inner_size().into();
+        let attrs = SurfaceAttributesBuilder::<WindowSurface>::new().build(
+            window.raw_window_handle(),
+            NonZeroU32::new(width).unwrap(),
+            NonZeroU32::new(height).unwrap(),
+        );
+
+        // Finally we can create a Surface, use it to make a PossiblyCurrentContext and create the glium Display
+        let surface = unsafe {
+            gl_config
+                .display()
+                .create_window_surface(&gl_config, &attrs)
+                .unwrap()
+        };
+        let context_attributes =
+            ContextAttributesBuilder::new().build(Some(window.raw_window_handle()));
+        let current_context = Some(unsafe {
+            gl_config
+                .display()
+                .create_context(&gl_config, &context_attributes)
+                .expect("failed to create context")
+        })
+        .unwrap()
+        .make_current(&surface)
+        .unwrap();
+        let display = Display::from_context_surface(current_context, surface).unwrap();
+
+        (window, display)
+    };
+
+    let program_state = program_state::ProgramState::new(
+        window,
+        display,
+        vec![
+            ([0.0_f32, 0.0, 0.5], [1.0_f32, 1.0, 1.0], 0.5_f32, 0.0),
+            (
+                [0.288675135, 0.288675135, 0.644337567],
+                [0.0, 0.0, 0.0],
+                0.25,
+                -0.5,
+            ),
+            (
+                [-0.288675135, 0.288675135, 0.644337567],
+                [0.0, 0.0, 0.0],
+                0.25,
+                -0.6,
+            ),
+        ],
+    );
 
     println!("generating camera shell meshes");
 
@@ -138,10 +209,10 @@ fn main() {
         VertexBuffer::immutable(
             &*program_state.display.borrow(),
             &[
-                Vertex::new([1.0, -1.0, 0.5]),
-                Vertex::new([-1.0, -1.0, 0.5]),
-                Vertex::new([1.0, 1.0, 0.5]),
-                Vertex::new([-1.0, 1.0, 0.5]),
+                Vertex::new([1.0, -1.0, 0.0]),
+                Vertex::new([-1.0, -1.0, 0.0]),
+                Vertex::new([1.0, 1.0, 0.0]),
+                Vertex::new([-1.0, 1.0, 0.0]),
             ],
         )
         .unwrap(),
@@ -149,10 +220,6 @@ fn main() {
             primitives: PrimitiveType::TriangleStrip,
         },
     );
-    let cam_shells = [
-        ([0.0_f32, 0.0, 0.5], [1.0_f32, 0.0, 0.0], 0.5_f32),
-        ([0.5_f32, 0.0, 0.5], [1.0_f32, 1.0, 0.0], 0.25_f32),
-    ];
     println!("initializng shader programs");
     let cam_shell_program = ShaderProgram::from_source(
         &*program_state.display.borrow(),
@@ -167,20 +234,33 @@ fn main() {
     println!("running event loop");
 
     const DRAWS_PER_SEC: Duration = Duration::from_nanos(16_666_666);
-
+    let mut t: f32 = 0.0;
     event_loop.run(move |ev, _, control_flow| {
+        let mut update = {
+            let program_state = program_state.clone();
+            let t = &mut t;
+            let update = move || {
+                for (centre, colour, scale, time_offset) in
+                    program_state.uniforms.borrow_mut().iter_mut()
+                {
+                    centre[1] = (*t + *time_offset).sin()*0.5;
+                    *t = *t + DRAWS_PER_SEC.as_secs_f32();
+                }
+            };
+            update
+        };
         let draw = {
             let program_state = program_state.clone();
-            let cam_shells_ref = &cam_shells;
             let cam_shell_program_ref = &cam_shell_program;
             let vertices = &vertices;
             let indices = &indices;
+
             let draw = move |first_draw: bool| {
                 let mut frame = program_state.display.borrow().draw();
 
-                frame.clear_color_and_depth((0.0, 0.0, 0.0, 1.0), 0.0);
+                frame.clear_color_and_depth((0.0, 0.0, 0.1, 1.0), 0.0);
 
-                for (centre, colour, scale) in cam_shells_ref {
+                for (centre, colour, scale, _) in program_state.uniforms.borrow().iter() {
                     frame
                         .draw(
                             vertices,
@@ -212,9 +292,11 @@ fn main() {
         let now = time::Instant::now();
         if let Some(_last_draw_time) = last_draw_time {
             if (now - _last_draw_time) >= DRAWS_PER_SEC {
+                update();
                 last_draw_time = Some(draw(false));
             }
         } else {
+            update();
             last_draw_time = Some(draw(true));
         };
         match ev {
