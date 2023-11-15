@@ -1,91 +1,41 @@
+use crate::{mesh::gen_cam_shells, program_state::AppState};
 use glium::{
     backend::glutin::SimpleWindowBuilder,
-    draw_parameters::{
-        ClipControlDepth, ClipControlOrigin, DepthClamp, PolygonOffset, ProvokingVertex, Stencil,
-    },
-    index::PrimitiveType,
-    uniform, BackfaceCullingMode, Blend, BlendingFunction, Depth, DepthTest, DrawParameters,
-    LinearBlendingFactor, PolygonMode, Program as ShaderProgram, StencilOperation, StencilTest,
-    Surface,
+    draw_parameters::{ProvokingVertex, Stencil},
+    uniforms::UniformsStorage,
+    BackfaceCullingMode, Blend, Depth, DepthTest, DrawParameters, PolygonMode,
+    Program as ShaderProgram, Surface,
 };
 use std::time::{self, Duration};
-use vertex::Vertex;
 use winit::{
     event::{Event, WindowEvent},
-    event_loop::EventLoopBuilder,
+    event_loop::{ControlFlow, EventLoopBuilder},
     window::WindowBuilder,
 };
 
+mod input;
 mod mesh;
 mod program_state;
 mod transform;
+mod update;
 mod vertex;
 
-const PARAMS: DrawParameters = DrawParameters {
-    depth: Depth {
-        test: DepthTest::IfLessOrEqual,
-        write: true,
-        range: (0.0, 1.0),
-        clamp: DepthClamp::NoClamp,
-    },
-    stencil: Stencil {
-        test_clockwise: StencilTest::AlwaysPass,
-        reference_value_clockwise: 0,
-        write_mask_clockwise: 0xffffffff,
-        fail_operation_clockwise: StencilOperation::Keep,
-        pass_depth_fail_operation_clockwise: StencilOperation::Keep,
-        depth_pass_operation_clockwise: StencilOperation::Keep,
-        test_counter_clockwise: StencilTest::AlwaysPass,
-        reference_value_counter_clockwise: 0,
-        write_mask_counter_clockwise: 0xffffffff,
-        fail_operation_counter_clockwise: StencilOperation::Keep,
-        pass_depth_fail_operation_counter_clockwise: StencilOperation::Keep,
-        depth_pass_operation_counter_clockwise: StencilOperation::Keep,
-    },
-    blend: Blend {
-        color: BlendingFunction::Addition {
-            source: LinearBlendingFactor::SourceAlpha,
-            destination: LinearBlendingFactor::OneMinusSourceAlpha,
-        },
-        alpha: BlendingFunction::Addition {
-            source: LinearBlendingFactor::SourceAlpha,
-            destination: LinearBlendingFactor::OneMinusSourceAlpha,
-        },
-        constant_value: (0.0, 0.0, 0.0, 0.0),
-    },
-    color_mask: (true, true, true, true),
-    line_width: None,
-    point_size: None,
-    backface_culling: BackfaceCullingMode::CullCounterClockwise,
-    polygon_mode: PolygonMode::Fill,
-    clip_planes_bitmask: 0,
-    multisampling: false,
-    dithering: true,
-    viewport: None,
-    scissor: None,
-    draw_primitives: true,
-    samples_passed_query: None,
-    time_elapsed_query: None,
-    primitives_generated_query: None,
-    transform_feedback_primitives_written_query: None,
-    condition: None,
-    transform_feedback: None,
-    smooth: None,
-    provoking_vertex: ProvokingVertex::LastVertex,
-    primitive_bounding_box: (-1.0..1.0, -1.0..1.0, -1.0..1.0, -1.0..1.0),
-    primitive_restart_index: false,
-    polygon_offset: PolygonOffset {
-        factor: 0.0,
-        units: 0.0,
-        point: false,
-        line: false,
-        fill: false,
-    },
-    clip_control_origin: ClipControlOrigin::LowerLeft,
-    clip_control_depth: ClipControlDepth::NegativeOneToOne,
-};
-
 fn main() {
+    let draw_parameters = DrawParameters {
+        depth: Depth {
+            test: DepthTest::IfLessOrEqual,
+            write: true,
+            ..Default::default()
+        },
+        stencil: Stencil::default(),
+        blend: Blend::alpha_blending(),
+        backface_culling: BackfaceCullingMode::CullCounterClockwise,
+        polygon_mode: PolygonMode::Fill,
+        multisampling: false,
+        dithering: false,
+        provoking_vertex: ProvokingVertex::LastVertex,
+        ..Default::default()
+    };
     println!("initializng event loop");
     let event_loop = EventLoopBuilder::new().build();
     println!("building window");
@@ -97,171 +47,110 @@ fn main() {
         )
         .build(&event_loop);
 
-    let program_state = program_state::ProgramState::new(window, display);
+    let program_state = AppState::new_ptr(window, display);
 
-    println!("generating camera shell meshes");
-    let shell_resolutions = [[63, 63]; 512];
+    let cam_shells;
+    let cam_shell_program;
+    {
+        let program_state = program_state.borrow();
+        println!("generating camera shell meshes");
+        let shell_resolutions = [[63, 63]; 512];
 
-    let cam_shells = cam_shells(&shell_resolutions, 4)
-        .into_iter()
-        .map(|mesh| {
-            (
-                mesh.vertex_buffer(&*program_state.display.borrow())
-                    .unwrap(),
-                mesh.index_buffer(&*program_state.display.borrow()).unwrap(),
-            )
-        })
-        .collect::<Vec<_>>();
+        cam_shells = gen_cam_shells(&shell_resolutions, 4)
+            .into_iter()
+            .map(|mesh| {
+                (
+                    mesh.vertex_buffer(&program_state.display).unwrap(),
+                    mesh.index_buffer(&program_state.display).unwrap(),
+                )
+            })
+            .collect::<Vec<_>>();
 
-    println!("initializng shader programs");
-    let cam_shell_program = ShaderProgram::from_source(
-        &*program_state.display.borrow(),
-        VERTEX_SHADER_SRC,
-        FRAGMENT_SHADER_SRC,
-        None,
-    )
-    .unwrap();
-
-    let mut last_draw_time = None;
+        println!("initializng shader programs");
+        cam_shell_program = ShaderProgram::from_source(
+            &program_state.display,
+            VERTEX_SHADER_SRC,
+            FRAGMENT_SHADER_SRC,
+            None,
+        )
+        .unwrap();
+    }
 
     println!("running event loop");
 
     const DRAWS_PER_SEC: Duration = Duration::from_nanos(16_666_666);
 
-    event_loop.run(move |ev, _, control_flow| {
+    let draw = {
+        let program_state = program_state.clone();
+        let draw = move |now| {
+            let mut program_state = program_state.borrow_mut();
+            let mut frame = program_state.display.draw();
+            frame.clear_color_and_depth((0.0, 0.0, 0.1, 1.0), 1.0);
 
-        let draw = {
-            let program_state = program_state.clone();
-            let cam_shells = &cam_shells;
-            let cam_shell_program = &cam_shell_program;
-            let draw = move |first_draw: bool| {
-                let mut frame = program_state.display.borrow().draw();
-                frame.clear_color_and_depth((0.0, 0.0, 0.1, 1.0), 1.0);
-
-                for (vertex_buffer, index_buffer) in cam_shells {
-                    frame
-                        .draw(
-                            vertex_buffer,
-                            index_buffer,
-                            cam_shell_program,
-                            &uniform! { projection: program_state.world_projection.borrow().0.to_cols_array_2d(), view: program_state.camera.borrow().mat().to_cols_array_2d() },
-                            &PARAMS,
+            for (vertex_buffer, index_buffer) in &cam_shells {
+                frame
+                    .draw(
+                        vertex_buffer,
+                        index_buffer,
+                        &cam_shell_program,
+                        &UniformsStorage::new(
+                            "projection",
+                            program_state.camera.world_projection().to_cols_array_2d(),
                         )
-                        .unwrap();
-                }
+                        .add(
+                            "view",
+                            program_state.camera.transfrom.mat().to_cols_array_2d(),
+                        ),
+                        &draw_parameters,
+                    )
+                    .unwrap();
+            }
 
-                frame.finish().unwrap();
+            frame.finish().unwrap();
 
-                if first_draw {
-                    program_state.window.borrow_mut().set_visible(true);
-                }
-                return time::Instant::now();
-            };
-            draw
+            program_state.last_draw_time = Some(now);
         };
+        draw
+    };
 
+    event_loop.run(move |ev, _, control_flow| {
         let now = time::Instant::now();
-        if let Some(_last_draw_time) = last_draw_time {
-            if (now - _last_draw_time) >= DRAWS_PER_SEC {
-                last_draw_time = Some(draw(false));
+        let last_draw_time = program_state.borrow().last_draw_time;
+        if let Some(last_draw_time) = last_draw_time {
+            if (now - last_draw_time) >= DRAWS_PER_SEC {
+                draw(now);
             }
         } else {
-            last_draw_time = Some(draw(true));
+            draw(now);
+            program_state.borrow().window.set_visible(true);
         };
+        let mut program_state = program_state.borrow_mut();
+        program_state.keyboard_state.downgrade_keys();
         match ev {
             Event::WindowEvent { event, .. } => match event {
+                WindowEvent::ModifiersChanged(state) => {
+                    program_state.keyboard_state.update_modifier_state(state);
+                }
+                WindowEvent::KeyboardInput { input, .. } => {
+                    program_state.keyboard_state.update_keys(input)
+                }
                 WindowEvent::CloseRequested => {
                     control_flow.set_exit();
                 }
                 WindowEvent::Resized(size) => {
-                    program_state.update_aspect_ratio(size);
+                    program_state.camera.update_aspect_ratio(size);
                 }
                 _ => (),
             },
-            Event::RedrawRequested(_) => {
-                println!("redraw requested");
-                last_draw_time = Some(draw(false))
-            }
+            Event::RedrawRequested(_) => draw(now),
+
             _ => (),
         }
         match control_flow {
-            winit::event_loop::ControlFlow::ExitWithCode(_) => (),
-            _ => control_flow.set_wait_until(last_draw_time.unwrap() + DRAWS_PER_SEC),
+            ControlFlow::ExitWithCode(_) => (),
+            _ => control_flow.set_wait_until(program_state.last_draw_time.unwrap() + DRAWS_PER_SEC),
         }
     });
-}
-
-fn cam_shells(shell_resolutions: &[[usize; 2]], z_pow: i32) -> Vec<mesh::Mesh> {
-    let mut meshes = Vec::with_capacity(shell_resolutions.len());
-    for (z, shell_resolution) in {
-        let num_resolutions = (shell_resolutions.len() - 1) as f32;
-        shell_resolutions
-            .into_iter()
-            .enumerate()
-            .map(move |(shell_index, shell_resolution)| {
-                let z = if num_resolutions == 0.0 {
-                    0.0
-                } else {
-                    (shell_index as f32 / num_resolutions).powi(z_pow)
-                };
-                (z + program_state::ProgramState::CAM_NEAR, shell_resolution)
-            })
-    } {
-        let verts = (0..(shell_resolution[0] + 1) * (shell_resolution[1] + 1))
-            .into_iter()
-            .map(|vertex_index| {
-                Vertex::new(
-                    ((vertex_index % (shell_resolution[0] + 1)) * 2) as f32
-                        / (shell_resolution[0] as f32)
-                        - 1.0,
-                    ((vertex_index / (shell_resolution[0] + 1)) * 2) as f32
-                        / (shell_resolution[1] as f32)
-                        - 1.0,
-                    z,
-                )
-            })
-            .collect::<Vec<_>>();
-
-        let mut indices = Vec::with_capacity(shell_resolution[0] * shell_resolution[1] * 3 * 2);
-        for i in 0..((shell_resolution[0] + 1) * (shell_resolution[1] + 1)) {
-            // say no thank you to right side vertices
-            if (i % (shell_resolution[0] + 1)) == (shell_resolution[0]) {
-                //println!("x_fuck you mr vertex");
-                continue;
-            }
-            // say no thank you to upper side vertices
-            if (i / (shell_resolution[0] + 1)) == (shell_resolution[1]) {
-                //println!("y_fuck you mr vertexices");
-                break;
-            }
-
-            // first tri
-            // 2--0
-            // | /
-            // |/
-            // 1
-            indices.push(i as u32 + (shell_resolution[0] + 1) as u32 + 1);
-            indices.push(i as u32);
-            indices.push(i as u32 + (shell_resolution[0] + 1) as u32);
-
-            // second tri
-            //    1
-            //   /|
-            //  / |
-            // 0--2
-            indices.push(i as u32);
-            indices.push(i as u32 + (shell_resolution[0] + 1) as u32 + 1);
-            indices.push(i as u32 + 1);
-        }
-
-        meshes.push(mesh::Mesh {
-            vertices: verts,
-            indices: indices,
-            primitive_type: PrimitiveType::TrianglesList,
-        })
-    }
-
-    return meshes;
 }
 
 const VERTEX_SHADER_SRC: &str = r#"
@@ -347,10 +236,13 @@ const VERTEX_SHADER_SRC: &str = r#"
 
     noperspective out float geometry;
     flat out float distance;
+
     uniform mat4 projection;
+    uniform mat4 view;
+
     void main() {
         gl_Position = vec4(position, 1.0);
-        geometry = snoise((projection * gl_Position).xyz) * 0.5 + 0.5;
+        geometry = snoise((projection * view * gl_Position).xyz) * 0.5 + 0.5;
         distance = 1.0 - position.z;
     }
 "#;
@@ -363,6 +255,6 @@ const FRAGMENT_SHADER_SRC: &str = "
     flat in float distance;
 
     void main() {
-        color = vec4(vec3(distance), smoothstep(0.45,0.55,geometry));
+        color = vec4(vec3(geometry*distance*distance), smoothstep(0.45,0.55,geometry));
     }
 ";
